@@ -1,0 +1,45 @@
+manifest_version: 1
+
+version:
+  name: v1_0_0
+  label: "1.0.0"
+  comment: "Initial release with hybrid data quality rules (column-level + cross-column)"
+
+artifacts:
+  setup_script: setup.sql
+  default_streamlit: streamlit_app.py
+  readme: README.md
+
+configuration:
+  log_level: INFO
+  trace_level: ALWAYS
+
+privileges:
+  - EXECUTE TASK
+  - EXECUTE MANAGED TASK
+  - CREATE DATABASE
+  - CREATE SCHEMA
+  - CREATE TABLE
+  - CREATE VIEW
+  - CREATE STAGE
+  - CREATE STREAMLIT
+  - USAGE (WAREHOUSE)
+
+references:
+  - snowflake.cortex.complete:
+      label: "Snowflake Cortex Complete"
+      privileges:
+        - USAGE
+      description: "Required for AI-powered rule generation"
+
+  - snowflake.information_schema.tables:
+      label: "Information Schema"
+      privileges:
+        - SELECT
+      description: "Required to read table metadata"
+
+  - snowflake.information_schema.columns:
+      label: "Information Schema Columns"
+      privileges:
+        - SELECT
+      description: "Required to read column metadata"
