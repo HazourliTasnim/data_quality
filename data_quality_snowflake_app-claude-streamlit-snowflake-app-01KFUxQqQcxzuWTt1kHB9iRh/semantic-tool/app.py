@@ -346,14 +346,15 @@ else:
     # ============================================================================
     # Main Tabs
     # ============================================================================
-    tab_dash, tab1, tab2, tab3, tab4, tab_dq, tab5 = st.tabs([
+    tab_dash, tab1, tab2, tab3, tab4, tab_dq, tab5, tab_poc = st.tabs([
         "📊 Dashboard",
         "🏠 Overview",
         "🧬 Semantic Model",
         "✓ Quality Rules",
         "📊 Validate & Export",
         "🔍 DQ Dashboard",
-        "📄 Document Quality"
+        "📄 Document Quality",
+        "POC - Embedding"
     ])
     # ============================================================================
     # TAB 0: Dashboard
@@ -3307,3 +3308,223 @@ else:
                 st.caption("• Find all documentation related to a table")
                 st.caption("• Verify data rules match policy documents")
                 st.caption("• Prepare unified training data (structured + unstructured)")
+
+    # ============================================================================
+    # TAB 7: POC - Détection d'erreurs par Embeddings (4 étapes)
+    # ============================================================================
+    with tab_poc:
+        st.markdown("<div style='margin-bottom: 2rem;'><h1 style='margin: 0; font-size: 2.5rem; font-weight: 700;'>POC - Détection d'erreurs par Embeddings</h1></div>", unsafe_allow_html=True)
+        st.markdown("<p style='color: #888; font-size: 0.9rem; margin-bottom: 1.5rem;'>On récupère les données de l'API, on les vectorise, on les stocke dans Snowflake, puis on teste la détection d'erreurs par comparaison sémantique.</p>", unsafe_allow_html=True)
+        
+        import sys
+        from pathlib import Path
+        import os
+        
+        # Add native-app to path for imports
+        native_app_path = os.path.join(os.path.dirname(__file__), "..", "..", "native-app")
+        native_app_path = os.path.abspath(native_app_path)
+        if native_app_path not in sys.path:
+            sys.path.insert(0, native_app_path)
+        
+        from sentence_transformers import SentenceTransformer
+        import numpy as np
+        from datetime import datetime
+        
+        # ===== ÉTAPE 1 : FETCH =====
+        st.subheader("Étape 1 -- Fetch des données depuis l'API")
+        st.markdown("On récupère toutes les données disponibles de l'API (NOM, TVA, SIRET, SIREN, secteur, forme juridique, etc.).")
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("Lancer le fetch API"):
+                try:
+                    from fetch_api_data import fetch_companies_data, save_to_csv, save_to_json
+                    
+                    st.info("Interrogation de l'API INSEE SIRENE...")
+                    companies_data = fetch_companies_data(queries=["orange", "bnp", "total"], use_api=True)
+                    
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    csv_file = f"entreprises_data_{timestamp}.csv"
+                    json_file = f"entreprises_data_{timestamp}.json"
+                    
+                    save_to_csv(companies_data, csv_file)
+                    save_to_json(companies_data, json_file)
+                    
+                    st.success(f"{len(companies_data)} companies fetched from INSEE!")
+                    st.dataframe(pd.DataFrame(companies_data))
+                    
+                    st.session_state.companies_data = companies_data
+                    st.session_state.data_file = json_file
+                    
+                except Exception as e:
+                    st.error(f"Error: {str(e)}")
+        
+        with col2:
+            json_files = list(Path(".").glob("../../../entreprises_data_*.json"))
+            if not json_files:
+                json_files = list(Path(".").glob("entreprises_data_*.json"))
+            
+            if json_files:
+                latest = max(json_files, key=lambda p: p.stat().st_mtime)
+                with open(latest) as f:
+                    data = json.load(f)
+                st.success(f"Loaded: {latest.name}")
+                st.dataframe(pd.DataFrame(data))
+                
+                if st.button("Use this data"):
+                    st.session_state.companies_data = data
+                    st.session_state.data_file = str(latest)
+        
+        st.divider()
+        
+        # ===== ÉTAPE 2 : EMBEDDING =====
+        st.subheader("Étape 2 -- Embedding des données")
+        st.markdown("On vectorise les données en utilisant un modèle d'embedding (all-MiniLM-L6-v2). L'embedding transforme chaque entreprise en un vecteur numérique que le LLM peut comprendre et comparer.")
+        
+        if st.button("Générer les embeddings"):
+            try:
+                from embedding_step import create_embeddings, save_embeddings
+                
+                if "companies_data" not in st.session_state or not st.session_state.companies_data:
+                    st.warning("Aucune donnée disponible. Lance d'abord le fetch (étape 1).")
+                else:
+                    with st.spinner("Vectorisation en cours..."):
+                        companies_data = st.session_state.companies_data
+                        embeddings_data, model = create_embeddings(companies_data)  # Now captures both return values
+                        
+                        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                        embedding_file = f"entreprises_embeddings_{timestamp}.json"
+                        
+                        save_embeddings(embeddings_data, embedding_file)
+                        
+                        st.success(f"Embeddings générés pour {len(embeddings_data)} entreprises.")
+                        st.session_state.embeddings_data = embeddings_data
+                        
+                        col1, col2, col3 = st.columns(3)
+                        with col1:
+                            st.metric("Dimension du vecteur", 384)
+                        with col2:
+                            st.metric("Entreprises", len(embeddings_data))
+                        with col3:
+                            st.metric("Modèle", "MiniLM-L6-v2")
+                        
+            except Exception as e:
+                st.error(f"Erreur lors de l'embedding : {str(e)}")
+        
+        st.divider()
+        
+        # ===== ÉTAPE 3 : STOCKAGE SNOWFLAKE =====
+        st.subheader("Étape 3 -- Stockage dans Snowflake")
+        st.markdown("On stocke ces vecteurs dans une base de données Snowflake, et on lie cette BDD au LLM pour qu'il puisse interroger les embeddings de référence.")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            snowflake_config = {
+                'user': st.text_input("Utilisateur Snowflake", type="password", key="sf_user"),
+                'password': st.text_input("Mot de passe", type="password", key="sf_pass"),
+                'account': st.text_input("Account Snowflake", key="sf_account"),
+            }
+        
+        with col2:
+            snowflake_config.update({
+                'warehouse': st.text_input("Warehouse", value="COMPUTE_WH", key="sf_warehouse"),
+                'database': st.text_input("Database", key="sf_database"),
+                'schema': st.text_input("Schema", value="PUBLIC", key="sf_schema"),
+            })
+        
+        if st.button("Envoyer vers Snowflake"):
+            if any(not v for v in snowflake_config.values() if v not in ["COMPUTE_WH", "PUBLIC"]):
+                st.warning("Remplis tous les champs de connexion Snowflake.")
+            elif "embeddings_data" not in st.session_state:
+                st.warning("Génère d'abord les embeddings (étape 2).")
+            else:
+                try:
+                    from snowflake_storage_step import get_snowflake_connection, create_embedding_table, insert_embeddings_to_snowflake
+                    
+                    st.info("Connexion à Snowflake en cours...")
+                    os.environ.update({
+                        'SNOWFLAKE_USER': snowflake_config['user'],
+                        'SNOWFLAKE_PASSWORD': snowflake_config['password'],
+                        'SNOWFLAKE_ACCOUNT': snowflake_config['account'],
+                        'SNOWFLAKE_WAREHOUSE': snowflake_config['warehouse'],
+                        'SNOWFLAKE_DATABASE': snowflake_config['database'],
+                        'SNOWFLAKE_SCHEMA': snowflake_config['schema'],
+                    })
+                    
+                    conn_sf = get_snowflake_connection()
+                    if conn_sf:
+                        create_embedding_table(conn_sf)
+                        insert_embeddings_to_snowflake(conn_sf, st.session_state.embeddings_data)
+                        conn_sf.close()
+                        st.success("Données envoyées dans Snowflake avec succès.")
+                    else:
+                        st.error("Impossible de se connecter à Snowflake.")
+                except Exception as e:
+                    st.error(f"Erreur Snowflake : {str(e)}")
+        
+        st.divider()
+        
+        # ===== ÉTAPE 4 : DÉTECTION D'ERREURS =====
+        st.subheader("Étape 4 -- Test de détection d'erreurs")
+        st.markdown("On soumet une ligne contenant une erreur au LLM. Il doit la détecter en la comparant avec la BDD embeddée (similarité cosinus entre vecteurs).")
+        
+        if st.button("Lancer les tests de détection"):
+            try:
+                from error_detection_step import (
+                    test_scenario_1_wrong_sector,
+                    test_scenario_2_mismatched_siren,
+                    test_scenario_3_typo_company_name,
+                    test_scenario_4_valid_company,
+                    detect_errors_in_record,
+                    load_embeddings,
+                )
+                
+                # Load reference embeddings
+                emb_files = list(Path(".").glob("../../../entreprises_embeddings_*.json"))
+                if not emb_files:
+                    emb_files = list(Path(".").glob("entreprises_embeddings_*.json"))
+                
+                if not emb_files:
+                    st.warning("Aucun fichier d'embeddings trouvé. Lance les étapes 1 et 2 d'abord.")
+                else:
+                    latest_emb = max(emb_files, key=lambda p: p.stat().st_mtime)
+                    reference_embeddings = load_embeddings(str(latest_emb))
+                    emb_model = SentenceTransformer('all-MiniLM-L6-v2')
+                    
+                    scenarios = [
+                        ("Scénario 1 -- Secteur incorrect", "L'entreprise Orange est soumise avec le secteur Agriculture au lieu de Télécommunications.", test_scenario_1_wrong_sector()),
+                        ("Scénario 2 -- SIREN mal appareillé", "BNP Paribas est soumise avec le SIREN d'Orange.", test_scenario_2_mismatched_siren()),
+                        ("Scénario 3 -- Faute de frappe dans le nom", "Le nom 'Orane' est soumis au lieu de 'Orange'.", test_scenario_3_typo_company_name()),
+                        ("Scénario 4 -- Données valides", "Total Energies avec des données correctes. Le LLM ne devrait pas détecter d'erreur.", test_scenario_4_valid_company()),
+                    ]
+                    
+                    for scenario_name, description, test_record in scenarios:
+                        st.write(f"**{scenario_name}**")
+                        st.caption(description)
+                        
+                        is_valid, errors, similarities = detect_errors_in_record(
+                            test_record, reference_embeddings, emb_model, similarity_threshold=0.75
+                        )
+                        
+                        st.write(f"Entreprise testée : {test_record['name']} (SIREN: {test_record['siren']}, Secteur: {test_record.get('secteur', 'N/A')})")
+                        
+                        if is_valid:
+                            st.success("Aucune erreur détectée -- la ligne est cohérente avec la base de référence.")
+                        else:
+                            for err in errors:
+                                st.warning(err)
+                        
+                        with st.expander("Scores de similarité"):
+                            sim_df = pd.DataFrame([
+                                {"Entreprise de référence": name, "Similarité": f"{score:.2%}"}
+                                for name, score in sorted(similarities.items(), key=lambda x: x[1], reverse=True)
+                            ])
+                            st.dataframe(sim_df, use_container_width=True, hide_index=True)
+                        
+                        st.divider()
+                    
+                    st.success("Les 4 scénarios de test ont été exécutés.")
+                
+            except Exception as e:
+                st.error(f"Erreur lors de la détection : {str(e)}")

@@ -20,6 +20,9 @@ from datetime import datetime
 from typing import List, Dict, Optional, Any, Tuple
 from snowflake.connector import SnowflakeConnection
 
+# POC Integration
+from poc_integration import render_embedding_dq_section
+
 
 # ============================================================================
 # Backend: Column Profiling
@@ -1381,4 +1384,12 @@ def render_dq_dashboard_tab(conn: SnowflakeConnection):
                 file_name=f"dq_dashboard_{source_info.get('table', 'table')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
                 mime="text/csv",
                 use_container_width=True
-            )
+            )            
+            # ============================================================================
+            # POC: Embedding-Based Anomaly Detection
+            # ============================================================================
+            # Render the POC section for DIM_ACCOUNT analysis
+            try:
+                render_embedding_dq_section(conn)
+            except Exception as e:
+                st.warning(f"POC section unavailable: {str(e)[:100]}")

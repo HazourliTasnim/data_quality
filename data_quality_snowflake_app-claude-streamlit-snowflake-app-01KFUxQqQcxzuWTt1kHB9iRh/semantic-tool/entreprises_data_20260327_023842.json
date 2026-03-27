@@ -1,0 +1,29 @@
+[
+  {
+    "name": "Orange",
+    "siren": "552100554",
+    "siret": "55210055400013",
+    "secteur": "Télécommunications",
+    "forme_juridique": "Société anonyme",
+    "employees": "150000+",
+    "source": "Public Dataset (Demo)"
+  },
+  {
+    "name": "BNP Paribas",
+    "siren": "662042449",
+    "siret": "66204244900060",
+    "secteur": "Banque",
+    "forme_juridique": "Société anonyme",
+    "employees": "180000+",
+    "source": "Public Dataset (Demo)"
+  },
+  {
+    "name": "Total Energies",
+    "siren": "550024574",
+    "siret": "55002457400127",
+    "secteur": "Pétrole et gaz",
+    "forme_juridique": "Société anonyme",
+    "employees": "100000+",
+    "source": "Public Dataset (Demo)"
+  }
+]
